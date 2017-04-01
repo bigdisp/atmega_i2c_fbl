@@ -1,0 +1,17 @@
+language: c
+sudo: required
+compiler: gcc
+branches:
+  only:
+    - master
+    - /^dev\/.*$/
+
+before_install:
+  - sudo apt-get update -qq
+
+install:
+  - sudo apt-get install -qq -y gcc-avr avr-libc binutils-avr
+  - cd Release
+
+script:
+  - make 
