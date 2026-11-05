@@ -44,7 +44,12 @@ The tool first sends `0x10 0x4C 0xFB` ("go to FBL") to the application, then rep
 
 Tests:
 ------
-The hex parser can be tested on the host: `python3 tests/test_hex_parser.py` (needs gcc).
+All tests run on a PC, no hardware required (needs gcc and python3; `make avr` also needs gcc-avr/avr-libc):
+
+    make -C tests        # C tests: hex parser + flash.c on a simulated SPM flash (ASan/UBSan), then test_hex_parser.py
+    make -C tests avr    # avr-gcc build of the FBL + check that it fits into the 2 KiB boot section
+
+The hex parser alone can also be tested with `python3 tests/test_hex_parser.py`.
 
 License
 -------
