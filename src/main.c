@@ -148,7 +148,8 @@ int main()
 	if (slave_addr < 0x10 || slave_addr > 0x77)
 	{
 		// Set the default address in this case:
-		slave_addr = 0x14;
+		// Same default as the application, so the flasher finds the FBL at the app's address
+		slave_addr = 0x10;
 	}
 
 	i2c_init(slave_addr);

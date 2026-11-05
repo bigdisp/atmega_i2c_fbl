@@ -27,7 +27,7 @@ Navigate to the release folder and run `make`. The FBL is built for the atmega8 
 
 Usage:
 ------
-The i2c address is read from EEPROM byte 0 (like the application); valid are `0x10` to `0x77`, otherwise `0x14` is used. The device takes either no parameters with the command, 8 bits of data or 16 bits of data. Several commands are available:
+The i2c address is read from EEPROM byte 0 (like the application); valid are `0x10` to `0x77`, otherwise `0x10` is used (the same default as the scoreboard application, so the FBL always listens on the address of the application). The device takes either no parameters with the command, 8 bits of data or 16 bits of data. Several commands are available:
 
  * `0x73` or `0x53` (s or S): The FBL jumps to the application (if there is one). No verification of the application is performed.
  * `0x77 0x66` (wf): The FBL goes into flashing mode. 0x77 is the address, 0x66 the value to be sent. A following single byte read returns `f`.
@@ -36,11 +36,11 @@ When in flashing mode, the FBL accepts writes of 1 to 32 characters of the hex f
 
 Flashing from a raspberry pi (python3 only, no extra modules needed):
 
-    ./fbl_flash.py 0x14 app.hex          # or: ./flashscript.sh 0x14 app.hex
+    ./fbl_flash.py 0x10 app.hex          # or: ./flashscript.sh 0x10 app.hex
 
 This should take a few seconds for a full 6 KiB application (the old one-character-per-`i2cset` script needed well over an hour). See `./fbl_flash.py --help` for options.
 
-The tool first sends `0x10 0x4C 0xFB` ("go to FBL") to the application, then repeats `wf` for up to 10 s until the FBL answers. If the application doesn't implement that command, reset/power-cycle the device while the tool is waiting.
+The tool first sends `0x10 0x4C 0xFB` ("go to FBL") to the application, then repeats `wf` for up to 10 s until the FBL answers. The scoreboard application resets into the FBL on this command via the watchdog; this requires the BOOTRST fuse to be programmed (atmega88pa: efuse `0xF8` = 1024 words boot section + BOOTRST). If the application doesn't implement that command, reset/power-cycle the device while the tool is waiting.
 
 Tests:
 ------

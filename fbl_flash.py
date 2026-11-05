@@ -117,7 +117,7 @@ def enter_fbl(dev, wait):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("address", type=lambda x: int(x, 0), help="i2c address, e.g. 0x14")
+    parser.add_argument("address", type=lambda x: int(x, 0), help="i2c address, e.g. 0x10")
     parser.add_argument("hexfile", help="Intel HEX file to flash")
     parser.add_argument("-b", "--bus", type=int, default=1, help="i2c bus number (default: 1)")
     parser.add_argument("--no-stepdown", action="store_true",
