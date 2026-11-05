@@ -9,18 +9,21 @@
 #include<avr/io.h>
 #include "i2c.h"
 
-uint8_t i2c_rx_buf[I2C_BUFFER_SIZE];
-uint8_t i2c_tx_buf[I2C_BUFFER_SIZE];
-uint8_t i2c_msg_size = 0;
-uint8_t i2c_status = I2C_NO_STATE;
-u_i2c_status i2c_status_register = {0};
+// Shared with the ISR
+volatile uint8_t i2c_rx_buf[I2C_BUFFER_SIZE];
+volatile uint8_t i2c_tx_buf[I2C_BUFFER_SIZE];
+volatile uint8_t i2c_msg_size = 0;
+volatile uint8_t i2c_status = I2C_NO_STATE;
+volatile u_i2c_status i2c_status_register = {0};
 
 // From i2c_interrupt.c:
-extern uint8_t i2c_tx_buf_ptr;
-extern uint8_t i2c_rx_buf_ptr;
+extern volatile uint8_t i2c_tx_buf_ptr;
+extern volatile uint8_t i2c_rx_buf_ptr;
 
 void i2c_init(uint8_t address)
 {
+	// Disable TWI and clear a pending TWINT (would keep SCL stretched)
+	TWCR = (1 << TWINT);
 	TWAR = (address << 1);
 	TWDR = 0xFF;
 	TWCR =  (1 << TWEN);  // Enable TWI, don't answer to any calls yet
@@ -188,4 +191,12 @@ uint8_t i2c_get_data(uint8_t * msg, uint8_t size)
 uint8_t i2c_get_rx_len()
 {
 	return i2c_rx_buf_ptr;
+}
+
+void i2c_abort()
+{
+	// Disable TWI (releases SDA/SCL) and clear a pending TWINT
+	TWCR = (1 << TWINT);
+	i2c_status_register.all = 0;
+	i2c_msg_size = 0;
 }

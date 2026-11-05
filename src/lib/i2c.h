@@ -107,4 +107,10 @@ uint8_t i2c_get_data(uint8_t * msg, uint8_t size);
  */
 uint8_t i2c_get_rx_len();
 
+/**
+ * Abort any transfer and disable the interface (releases the bus lines).
+ * Re-enable it with i2c_slave_start_tx_data().
+ */
+void i2c_abort();
+
 #endif /* I2C_H_ */

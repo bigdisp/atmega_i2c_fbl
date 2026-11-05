@@ -21,6 +21,10 @@
 /// application is started (Timer1, F_CPU / 1024 ticks). 1 s @ 8 MHz.
 #define FBL_TIMEOUT_TICKS ((uint16_t) (F_CPU / 1024UL))
 
+/// Max. time between two chunks while flashing, after that the transfer is
+/// aborted and the bus released (e.g. the master died mid-transfer). 2 s.
+#define FLASH_IDLE_TIMEOUT_TICKS ((uint16_t) (2 * F_CPU / 1024UL))
+
 #ifndef MCUSR
 #define MCUSR MCUCSR // atmega8
 #endif
@@ -61,7 +65,17 @@ static enum hex_parser_result run_flasher(void)
 	for (;;)
 	{
 		// Wait until the master has finished its write + read exchange
-		i2c_wait_busy();
+		TCNT1 = 0;
+		while (i2c_busy())
+		{
+			if (TCNT1 >= FLASH_IDLE_TIMEOUT_TICKS)
+			{
+				// Master is gone (maybe in the middle of a transfer, holding the
+				// bus). Release the bus and give up.
+				i2c_abort();
+				return e_hex_error;
+			}
+		}
 
 		u_i2c_status st = i2c_get_status_register();
 		if (st.rx_data_in_buf && st.last_rx_ok)
@@ -130,8 +144,8 @@ int main()
 	uint8_t slave_addr;
 	slave_addr = eeprom_read_byte(0);
 
-	// Check for illegal addresses:
-	if (slave_addr >= 0xF0 || slave_addr <= 0x0F)
+	// Check for illegal addresses (valid 7 bit range, same as the application):
+	if (slave_addr < 0x10 || slave_addr > 0x77)
 	{
 		// Set the default address in this case:
 		slave_addr = 0x14;

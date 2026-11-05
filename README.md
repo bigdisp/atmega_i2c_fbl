@@ -11,6 +11,7 @@ Startup behaviour:
  * If there is no application (flash page 0 erased), the FBL stays active.
  * When flashing starts, page 0 is erased first and written last. An interrupted or failed update therefore never leaves a half-written application that would be started; the FBL stays active until a complete file was flashed.
  * After a successful update, the new application is started immediately.
+ * If the master stops for more than 2 s while flashing, the FBL aborts, releases the bus and answers `ERR`.
  * The watchdog is disabled on FBL start (it stays enabled after a watchdog reset on the atmega88), so the application can use a watchdog reset to enter the FBL.
  
 Requirements:
@@ -26,7 +27,7 @@ Navigate to the release folder and run `make`. The FBL is built for the atmega8 
 
 Usage:
 ------
-The default i2c address of the atmega88p is `0x14`. The device takes either no parameters with the command, 8 bits of data or 16 bits of data. Several commands are available:
+The i2c address is read from EEPROM byte 0 (like the application); valid are `0x10` to `0x77`, otherwise `0x14` is used. The device takes either no parameters with the command, 8 bits of data or 16 bits of data. Several commands are available:
 
  * `0x73` or `0x53` (s or S): The FBL jumps to the application (if there is one). No verification of the application is performed.
  * `0x77 0x66` (wf): The FBL goes into flashing mode. 0x77 is the address, 0x66 the value to be sent. A following single byte read returns `f`.
