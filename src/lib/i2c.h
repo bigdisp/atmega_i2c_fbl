@@ -10,8 +10,10 @@
 
 #include<avr/io.h>
 
-/// Largest permitted I2C message size in both directions
-#define I2C_BUFFER_SIZE 4
+/// Largest permitted I2C message size in both directions.
+/// Byte I2C_BUFFER_SIZE of a write is still stored but NACKed, so masters
+/// should write at most I2C_BUFFER_SIZE - 2 bytes (the FBL flasher uses 32).
+#define I2C_BUFFER_SIZE 34
 
 /**
  * I2C status structure
@@ -99,5 +101,16 @@ void i2c_slave_start_rx();
  * @param [in] size Max size of data returned.
  */
 uint8_t i2c_get_data(uint8_t * msg, uint8_t size);
+
+/**
+ * Return the number of bytes received in the last (or current) write transaction.
+ */
+uint8_t i2c_get_rx_len();
+
+/**
+ * Abort any transfer and disable the interface (releases the bus lines).
+ * Re-enable it with i2c_slave_start_tx_data().
+ */
+void i2c_abort();
 
 #endif /* I2C_H_ */

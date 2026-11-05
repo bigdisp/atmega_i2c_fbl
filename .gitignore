@@ -1,0 +1,8 @@
+Release/**/*.o
+Release/**/*.d
+Release/*.elf
+Release/*.hex
+Release/*.eep
+Release/*.lss
+Release/*.map
+__pycache__/

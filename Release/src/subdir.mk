@@ -5,14 +5,17 @@
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
 ../src/flash.c \
+../src/hex_parser.c \
 ../src/main.c 
 
 C_DEPS += \
 ./src/flash.d \
+./src/hex_parser.d \
 ./src/main.d 
 
 OBJS += \
 ./src/flash.o \
+./src/hex_parser.o \
 ./src/main.o 
 
 

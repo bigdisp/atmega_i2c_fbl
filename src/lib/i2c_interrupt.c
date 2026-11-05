@@ -18,21 +18,22 @@
 
 
 // I2C Interrupt
-extern uint8_t i2c_tx_buf[];
-extern uint8_t i2c_rx_buf[];
-extern uint8_t i2c_msg_size;
-extern uint8_t i2c_status;
-extern u_i2c_status i2c_status_register;
+extern volatile uint8_t i2c_tx_buf[];
+extern volatile uint8_t i2c_rx_buf[];
+extern volatile uint8_t i2c_msg_size;
+extern volatile uint8_t i2c_status;
+extern volatile u_i2c_status i2c_status_register;
 
 // This will be reset from i2c.c
-uint8_t i2c_tx_buf_ptr;
+volatile uint8_t i2c_tx_buf_ptr;
+// Number of bytes received in the last write transaction (read from i2c.c)
+volatile uint8_t i2c_rx_buf_ptr;
 
 ISR(TWI_vect)
 {
 
-	static uint8_t i2c_rx_buf_ptr;
-
-	switch(TWSR)
+	// Mask the prescaler bits
+	switch(TW_STATUS)
 	{
 	// Slave Transmit Mode
 	case TW_ST_SLA_ACK: 	//Transmit initialized + First byte
@@ -44,10 +45,11 @@ ISR(TWI_vect)
 		//no break;
 	case TW_ST_DATA_ACK:	//Master demands more data (ACK'ed)
 		//TODO: Muss hier die Reihenfolge gedreht werden?
-		TWDR = i2c_tx_buf[i2c_tx_buf_ptr++];
-		if (i2c_tx_buf_ptr >= i2c_msg_size - 1)
+		TWDR = (i2c_tx_buf_ptr < I2C_BUFFER_SIZE) ? i2c_tx_buf[i2c_tx_buf_ptr] : 0xFF;
+		++i2c_tx_buf_ptr;
+		if (i2c_tx_buf_ptr >= i2c_msg_size)
 		{
-			// Do not set TWEA because we cannot send any more data than one more byte
+			// This was the last byte: clear TWEA, the master has to NACK it
 			TWCR = (1 << TWEN) | (1 << TWIE) | (1 << TWINT);
 		}
 		else
@@ -58,7 +60,7 @@ ISR(TWI_vect)
 		break;
 
 	case TW_ST_DATA_NACK:	//Master answered with NACK on last transmit
-		if(i2c_tx_buf_ptr == i2c_msg_size)
+		if(i2c_tx_buf_ptr >= i2c_msg_size)
 		{
 			i2c_status_register.last_tx_ok = 1;
 			i2c_status_register.tx_data_in_buf = 0;
@@ -66,7 +68,7 @@ ISR(TWI_vect)
 		}
 		else
 		{
-			i2c_status = TWSR;
+			i2c_status = TW_STATUS;
 		}
 
 		TWCR = (1 << TWEN) | (1 << TWINT); //Switch to passive mode
@@ -124,10 +126,15 @@ ISR(TWI_vect)
 
 		//no break
 	case TW_ST_LAST_DATA:
-	case TW_BUS_ERROR:
 	default:
-		i2c_status = TWSR;
+		i2c_status = TW_STATUS;
 		TWCR = (1 << TWEN) | (1 << TWINT); // Switch to passive mode
+		break;
+
+	case TW_BUS_ERROR:
+		// Recover: TWSTO releases the bus lines (no STOP is sent in slave mode)
+		i2c_status = TW_STATUS;
+		TWCR = (1 << TWEN) | (1 << TWINT) | (1 << TWSTO);
 		break;
 	}
 }
