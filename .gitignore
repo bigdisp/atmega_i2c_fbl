@@ -6,3 +6,4 @@ Release/*.eep
 Release/*.lss
 Release/*.map
 __pycache__/
+tests/build/
