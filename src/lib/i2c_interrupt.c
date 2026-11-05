@@ -26,11 +26,11 @@ extern u_i2c_status i2c_status_register;
 
 // This will be reset from i2c.c
 uint8_t i2c_tx_buf_ptr;
+// Number of bytes received in the last write transaction (read from i2c.c)
+uint8_t i2c_rx_buf_ptr;
 
 ISR(TWI_vect)
 {
-
-	static uint8_t i2c_rx_buf_ptr;
 
 	switch(TWSR)
 	{

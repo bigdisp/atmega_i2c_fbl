@@ -1,11 +1,17 @@
 Atmega8(8pa) I2C Flash Bootloader
 =====================================
 This repository provides a simple flash bootloader for flashing an atmega8 or atmega88pa via the i2c interface.
-Warning: Development is at an early stage and the FBL may not work as intended. There is currently no verification method to verify the written flash. Also, the FBL is currently very large.
+Warning: Development is at an early stage and the FBL may not work as intended. There is currently no read back of the written flash.
 
-The FBL takes ascii hex over the i2c interface, converts them to binary values and stores them in RAM. Once a full page is received, it is written to the flash. After that, the controller will accept more data to be written until the full file has been written.
+The FBL takes an Intel HEX file (ascii) over the i2c interface. Every record is checked against its checksum before it is used, the data is collected in RAM and written to the flash one page at a time. Data for the FBL area (0x1800 and above) is rejected.
 
-Currently, the FBL stays in bootmode after system start. A special i2c command must be sent to leave the FBL and jump to the application. 
+Startup behaviour:
+
+ * After reset, the FBL waits 1 s for the flash command (`wf`). Without it, the application is started. Other i2c traffic does not delay the application start.
+ * If there is no application (flash page 0 erased), the FBL stays active.
+ * When flashing starts, page 0 is erased first and written last. An interrupted or failed update therefore never leaves a half-written application that would be started; the FBL stays active until a complete file was flashed.
+ * After a successful update, the new application is started immediately.
+ * The watchdog is disabled on FBL start (it stays enabled after a watchdog reset on the atmega88), so the application can use a watchdog reset to enter the FBL.
  
 Requirements:
 -------------
@@ -16,19 +22,28 @@ Requirements:
 
 Build:
 ------
-Navigate to the release folder and run `make`.
+Navigate to the release folder and run `make`. The FBL is built for the atmega8 by default; for the atmega88(p)(a) change `-mmcu` in `Release/makefile` and `Release/src/*/subdir.mk`.
 
 Usage:
 ------
 The default i2c address of the atmega88p is `0x14`. The device takes either no parameters with the command, 8 bits of data or 16 bits of data. Several commands are available:
 
- * `0x73` or `0x53` (s or S): The FBL jumps to the application. No verification of the application is performed.
- * `0x77 0x66` (wf): The FBL goes into flashing mode. 0x77 is the address, 0x66 the value to be sent.
+ * `0x73` or `0x53` (s or S): The FBL jumps to the application (if there is one). No verification of the application is performed.
+ * `0x77 0x66` (wf): The FBL goes into flashing mode. 0x77 is the address, 0x66 the value to be sent. A following single byte read returns `f`.
 
-When in flashing mode, the FBL accepts only single byte writes (only address, no data). The contents of the hex file must be provided sequentially with enough time between each transmit to allow the FBL to write the pages as necessary. The atmega8 has a page size of 64 bytes, therefore a longer break should be put in between transmissions after 64 flash bytes (overhead must be subtracted). There is no way of leaving flashing mode unless an error occurrs or flashing is finished.
-In flashing mode, the FBL will send back every received byte. By reading a single byte (no address, direct read) the received data can be verified.
+When in flashing mode, the FBL accepts writes of 1 to 32 characters of the hex file (line breaks may be omitted). Each write must be followed by a single byte read, which completes the exchange and returns the last character of the *previous* chunk (useful to detect errors). While the FBL parses a chunk or writes a flash page, it does not acknowledge its address, so the master just has to retry a NACKed write; no fixed delays are needed. There is no way of leaving flashing mode unless an error occurrs or flashing is finished (end-of-file record). On an error, the FBL stays active and answers `ERR`; flashing has to be restarted with `wf`.
 
-An example flash sequence is provided in the flashscript.sh shell script intended for the raspberry pi.
+Flashing from a raspberry pi (python3 only, no extra modules needed):
+
+    ./fbl_flash.py 0x14 app.hex          # or: ./flashscript.sh 0x14 app.hex
+
+This should take a few seconds for a full 6 KiB application (the old one-character-per-`i2cset` script needed well over an hour). See `./fbl_flash.py --help` for options.
+
+The tool first sends `0x10 0x4C 0xFB` ("go to FBL") to the application, then repeats `wf` for up to 10 s until the FBL answers. If the application doesn't implement that command, reset/power-cycle the device while the tool is waiting.
+
+Tests:
+------
+The hex parser can be tested on the host: `python3 tests/test_hex_parser.py` (needs gcc).
 
 License
 -------

@@ -1,0 +1,4 @@
+# Included by the generated Release/makefile before anything else.
+# The generated dependency files (*.d) would otherwise define the default goal,
+# so a second `make` only rebuilt a single object file.
+.DEFAULT_GOAL := all

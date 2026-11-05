@@ -5,232 +5,126 @@
  *      Author: martin
  */
 
-#include<avr/io.h>
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <avr/pgmspace.h>
+#include <avr/eeprom.h>
+#include <avr/wdt.h>
 
 #include "lib/i2c.h"
 #include "isr_manipulator.h"
-#include "flash.h"
-#include <avr/wdt.h>
-#include <string.h>
-#include <avr/interrupt.h>
+#include "hex_parser.h"
 
 #define I2C_DATA_SIZE 4
-#define APP_START_ADDR 0x0000
 
-enum fbl_state
+/// Time the FBL waits for the flash command ('w' 'f') after reset before the
+/// application is started (Timer1, F_CPU / 1024 ticks). 1 s @ 8 MHz.
+#define FBL_TIMEOUT_TICKS ((uint16_t) (F_CPU / 1024UL))
+
+#ifndef MCUSR
+#define MCUSR MCUCSR // atmega8
+#endif
+#ifndef TIFR
+#define TIFR TIFR1 // atmega88
+#endif
+
+/**
+ * Returns true if something has been flashed to the application area.
+ */
+static uint8_t app_present(void)
 {
-	e_fbl_state_wait,
-	e_fbl_state_parse,
-	e_fbl_state_start_app
-};
-
-
-enum flash_parser_state flash_state_machine(enum flash_parser_state state, uint8_t rx_char)
-{
-	// Checksum of received data
-	static uint16_t hex_check = 0;
-	// target address (hex)
-	static uint16_t hex_addr = 0;
-	// target flash page to be written
-	static uint16_t flash_page = 0;
-	// write pointer for flash buffer (converted data)
-	static uint16_t flash_cnt = 0;
-
-
-	// Symbol counter for write position
-	static uint8_t hex_cnt = 0;
-	// Buffer for ascii data conversion
-	static uint8_t hex_buffer[5];
-	// Buffer for converted data (to be written)
-	static uint8_t flash_data[SPM_PAGESIZE];
-	// Size of the received hex data in one line
-	static uint8_t hex_size = 0;
-	// Receive counter for received hex data in one line
-	static uint8_t hex_data_cnt = 0;
-	// Received hex type
-	static enum flash_parser_line_type hex_type = e_parser_line_type_data;
-	// Received checksum (ASCII)
-	static uint8_t hex_checksum = 0;
-
-	// Flag to determine start address of page for writing
-	static uint8_t flash_page_flag = 1;
-
-
-	switch(state)
-	{
-		//Initialization
-	case e_parser_state_start:
-		if (FLASH_PARSER_SYM_LINE_START == rx_char)
-		{
-			state = e_parser_state_size;
-			hex_cnt = 0;
-			hex_check = 0;
-		}
-		break;
-		// Parse size of data
-	case e_parser_state_size:
-		hex_buffer[hex_cnt] = rx_char;
-		++hex_cnt;
-		if (2 == hex_cnt)
-		{
-			state = e_parser_state_address;
-			hex_cnt = 0;
-			hex_size = (uint8_t) flash_ascii_to_num(hex_buffer, 2);
-			hex_check += hex_size;
-		}
-		break;
-		// Parse address to write to
-	case e_parser_state_address:
-		hex_buffer[hex_cnt] = rx_char;
-		++ hex_cnt;
-		if (4 == hex_cnt)
-		{
-			state = e_parser_state_type;
-			hex_cnt = 0;
-			hex_addr = flash_ascii_to_num(hex_buffer, 4);
-			hex_check += (uint8_t) hex_addr;
-			hex_check += (uint8_t) (hex_addr >> 8);
-			if (flash_page_flag)
-			{
-				flash_page = hex_addr - (hex_addr % SPM_PAGESIZE);
-				flash_page_flag = 0;
-			}
-		}
-		break;
-		// Parse type of line (data / checksum)
-	case e_parser_state_type:
-		hex_buffer[hex_cnt] = rx_char;
-		++hex_cnt;
-
-		if (2 == hex_cnt)
-		{
-			hex_cnt = 0;
-			hex_data_cnt = 0;
-			hex_type = (uint8_t) flash_ascii_to_num(hex_buffer, 2);
-			hex_check += hex_type;
-			// Different datatypes require different followup handling
-			switch (hex_type)
-			{
-			case e_parser_line_type_checksum:
-				state = e_parser_state_checksum;
-				break;
-			case e_parser_line_type_data:
-			default:
-				state = e_parser_state_data;
-				break;
-			}
-		}
-		break;
-		// read data
-	case e_parser_state_data_written:
-	case e_parser_state_data:
-		hex_buffer[hex_cnt] = rx_char;
-		++hex_cnt;
-
-		if (2 == hex_cnt)
-		{
-			hex_cnt = 0;
-			flash_data[flash_cnt] = (uint8_t) flash_ascii_to_num(hex_buffer, 2);
-			hex_check += flash_data[flash_cnt];
-			++flash_cnt;
-			++hex_data_cnt;
-
-			if (hex_size == hex_data_cnt)
-			{
-				state = e_parser_state_checksum;
-				hex_data_cnt = 0;
-			}
-
-			// Buffer is full. We need to write
-			// TODO: While data received is periodically checked, the last part will not be checked.
-			// This needs to be moved after the checksum parsing to ensure we only write checked data.
-			if (SPM_PAGESIZE == flash_cnt)
-			{
-				flash_write_page(flash_page, flash_data);
-				memset(flash_data, 0xFF, sizeof(flash_data));
-				flash_cnt = 0;
-				flash_page_flag = 1;
-				if (e_parser_state_checksum == state)
-				{
-					state = e_parser_state_checksum_data_written;
-				}
-				else
-				{
-					state = e_parser_state_data_written;
-				}
-			}
-		}
-		break;
-		// Checksum
-	case e_parser_state_checksum_data_written:
-	case e_parser_state_checksum:
-		hex_buffer[hex_cnt] = rx_char;
-		++hex_cnt;
-
-		if (2 == hex_cnt)
-		{
-			hex_checksum = (uint8_t) flash_ascii_to_num(hex_buffer, 2);
-			hex_check += hex_checksum;
-			hex_check &= 0x00FF;
-
-			if (e_parser_line_type_checksum == hex_type)
-			{
-				flash_write_page(flash_page, flash_data);
-				state = e_parser_state_finished;
-			}
-			else if (0 == hex_check)
-			{
-				state = e_parser_state_start;
-			}
-			else
-			{
-				state = e_parser_state_error;
-			}
-		}
-		break;
-	case e_parser_state_error:
-		break;
-	default:
-		break;
-	}
-	PORTB ^= (1 << PB1);
-	return state;
+	return 0xFFFF != pgm_read_word(0);
 }
 
 /**
- * Runs the flasher undisturbed of any i2c handling. Don't write the letters too quickly.
+ * Flash mode.
+ *
+ * Protocol (lock step): the master writes a chunk of 1 to I2C_BUFFER_SIZE - 2
+ * hex file characters, then reads a single byte. The read completes the
+ * exchange; only then is the chunk parsed. The byte read back is the last
+ * character of the previously processed chunk and can be used for checking.
+ *
+ * While a chunk is being parsed (and a flash page possibly written), the slave
+ * does not acknowledge its address, so the master simply has to retry its write
+ * until it is ACKed. No fixed delays are required.
+ *
+ * @return e_hex_finished or e_hex_error
  */
-void run_flasher(uint8_t rx_char)
+static enum hex_parser_result run_flasher(void)
 {
-	enum flash_parser_state parser_state = e_parser_state_start;
-	i2c_slave_start_tx_data(&rx_char, 1);
-	parser_state = flash_state_machine(parser_state, rx_char);
+	enum hex_parser_result result;
+	uint8_t rx_buf[I2C_BUFFER_SIZE];
+	uint8_t echo = 0;
 
-	while(e_parser_state_finished != parser_state && e_parser_state_error != parser_state)
+	hex_parser_init();
+
+	for (;;)
 	{
+		// Wait until the master has finished its write + read exchange
 		i2c_wait_busy();
-		if (i2c_get_data(&rx_char, 1))
+
+		u_i2c_status st = i2c_get_status_register();
+		if (st.rx_data_in_buf && st.last_rx_ok)
 		{
-			parser_state = flash_state_machine(parser_state, rx_char);
+			uint8_t len = i2c_get_rx_len();
+			i2c_get_data(rx_buf, len);
+
+			for (uint8_t i = 0; i < len; ++i)
+			{
+				echo = rx_buf[i];
+				result = hex_parser_put(echo);
+				if (e_hex_busy != result)
+				{
+					return result;
+				}
+				PORTB ^= (1 << PB1);
+			}
 		}
-		i2c_slave_start_tx_data(&rx_char, 1);
+
+		// Re-enable the interface (and ACKs) for the next chunk
+		i2c_slave_start_tx_data(&echo, 1);
 	}
+}
+
+/**
+ * Restore the reset state of everything the FBL used and jump to the application.
+ */
+static void __attribute__((noreturn)) start_app(void)
+{
+	void (*app)(void) = 0x0000;
+
+	cli();
+	TWCR = 0;
+	TWAR = 0;
+	TCCR1B = 0;
+	TCNT1 = 0;
+	TIFR = 0xFF;
+	DDRB = 0;
+	PORTB = 0;
+	isr_app();
+	app();
+	for (;;);
 }
 
 int main()
 {
+	// The watchdog stays enabled after a watchdog reset on newer devices
+	// (atmega88). The app may use a watchdog reset to enter the FBL.
+	MCUSR = 0;
+	wdt_disable();
+
 	isr_fbl();
-	void (*app_start)(void) = APP_START_ADDR;
 
-	// Watchdog:
-	//wdt_enable(WDTO_2S);
-	//wdt_reset();
+	PORTB &= ~((1 << PB0) | (1 << PB1));
+	DDRB |= (1 << PB0) | (1 << PB1);
 
-	PORTB &= ~(1 << PB0);
-	PORTB &= ~(1 << PB1);
-
-	DDRB |= (1 << PB0);
-	DDRB |= (1 << PB1);
+	// Startup timeout
+	TCNT1 = 0;
+	TCCR1B = (1 << CS12) | (1 << CS10); // F_CPU / 1024
+	// Cleared after a failed flash attempt: the app is incomplete then
+	uint8_t timeout_active = 1;
+	// 'wf' received, waiting for the hex file
+	uint8_t flash_mode = 0;
 
 	//i2c / TWI
 	uint8_t slave_addr;
@@ -244,21 +138,29 @@ int main()
 	}
 
 	i2c_init(slave_addr);
-	//uint8_t i2c_msg[I2C_DATA_SIZE] = {0xFF, 0xFF, 0xFF, 0xFF};
-	uint8_t i2c_tx_msg[I2C_DATA_SIZE] = {0x46, 0x42, 0x4C, 0xFF}; // Default Start Value: FBL
-	uint8_t i2c_rx_msg[I2C_DATA_SIZE] = {0x46, 0x42, 0x4C, 0xFF};
+	uint8_t i2c_tx_msg[I2C_DATA_SIZE] = {'F', 'B', 'L', 0xFF}; // Default Start Value: FBL
+	uint8_t i2c_rx_msg[I2C_DATA_SIZE];
 	u_i2c_status i2c_st_reg;
-	i2c_slave_start_tx_data(i2c_tx_msg,3);
-
-	enum fbl_state fbl_state = e_fbl_state_wait;
+	i2c_slave_start_tx_data(i2c_tx_msg, 3);
 
 	sei();
 
-	do
+	for (;;)
 	{
+		// Start the application after the timeout unless flashing is in progress / failed
+		if (timeout_active && TCNT1 >= FBL_TIMEOUT_TICKS && app_present())
+		{
+			start_app();
+		}
+
 		// Re-enable i2c tx/rx
 		i2c_st_reg = i2c_get_status_register();
-		if (i2c_st_reg.tx_data_in_buf && !i2c_st_reg.rx_data_in_buf)
+		if (i2c_busy())
+		{
+			// Interface is enabled (possibly mid-transfer). Don't touch it, re-arming
+			// it here would clear rx_data_in_buf and could drop received data.
+		}
+		else if (i2c_st_reg.tx_data_in_buf && !i2c_st_reg.rx_data_in_buf)
 		{
 			// There is still tx data in the buffer, simply re-enable rx/tx
 			i2c_slave_start_rx();
@@ -269,70 +171,64 @@ int main()
 			i2c_slave_start_tx_data(i2c_tx_msg, I2C_DATA_SIZE);
 		}
 
-		// TODO: Read symbol from i2c
 		i2c_st_reg = i2c_get_status_register();
-
-		if (i2c_st_reg.rx_data_in_buf && i2c_st_reg.last_rx_ok)
+		if (!(i2c_st_reg.rx_data_in_buf && i2c_st_reg.last_rx_ok))
 		{
-			i2c_get_data(i2c_rx_msg, I2C_DATA_SIZE);
+			continue;
 		}
 
-		// State machine of FBL
-		if (e_fbl_state_parse == fbl_state && i2c_st_reg.rx_data_in_buf && i2c_st_reg.last_rx_ok)
+		if (flash_mode)
 		{
-			// Mode: Flash
-			//
-
-			run_flasher(i2c_rx_msg[0]);
-			fbl_state = e_fbl_state_wait;
-		}
-		else if (e_fbl_state_wait == fbl_state)
-		{
-			// Mode: Wait for instructions
-			//
-			// TODO: Check compatibility of fbl commands with application
-
-			// Data sent: 0x77 0x66
-			if ('w' == i2c_rx_msg[0] && 'f' == i2c_rx_msg[1])
+			// First chunk of the hex file received, the flasher fetches it itself
+			flash_mode = 0;
+			if (e_hex_finished == run_flasher())
 			{
-				// Switch to flash mode
-				fbl_state = e_fbl_state_parse;
-				i2c_tx_msg[0] = 'f'; // 0x66
-				i2c_tx_msg[1] = 's'; // 0x73
-				i2c_tx_msg[2] = 0;
-				i2c_tx_msg[3] = 0;
-				i2c_slave_start_tx_data(i2c_tx_msg, I2C_DATA_SIZE);
-
-			}
-			// Data sent: 0x73 or 0x53
-			else if ('s' == i2c_rx_msg[0] || 'S' == i2c_rx_msg[0])
-			{
-				// Start application
-				fbl_state = e_fbl_state_start_app;
-				i2c_tx_msg[0] = 's';
-				i2c_tx_msg[1] = 'a';
-				i2c_tx_msg[2] = 'p';
-				i2c_tx_msg[3] = 'p';
-				i2c_slave_start_tx_data(i2c_tx_msg, I2C_DATA_SIZE);
-			}
-			else
-			{
-				for (unsigned int i = 0; i < I2C_DATA_SIZE; ++i)
-				{
-					i2c_tx_msg[i] = i2c_rx_msg[i];
-				}
+				// Done, a new application is in place
+				start_app();
 			}
 
-			//TODO: Wait for a specified time, then boot app if no signal is received
+			// Error: stay in the FBL (the application is probably incomplete) and
+			// report the error. The master has to restart flashing with 'wf'.
+			PORTB |= (1 << PB0);
+			i2c_tx_msg[0] = 'E';
+			i2c_tx_msg[1] = 'R';
+			i2c_tx_msg[2] = 'R';
+			i2c_tx_msg[3] = 0;
+			i2c_slave_start_tx_data(i2c_tx_msg, I2C_DATA_SIZE);
+			timeout_active = 0;
+			continue;
 		}
 
-		// Reset watchdog
-		//wdt_reset();
+		i2c_get_data(i2c_rx_msg, I2C_DATA_SIZE);
 
-	} while(e_fbl_state_start_app != fbl_state);
-
-	isr_app();
-	app_start();
+		// Data sent: 0x77 0x66
+		if ('w' == i2c_rx_msg[0] && 'f' == i2c_rx_msg[1])
+		{
+			// Switch to flash mode. The master writes the hex file next.
+			// If it doesn't do so within the timeout, the app is started anyway.
+			flash_mode = 1;
+			TCNT1 = 0;
+			i2c_tx_msg[0] = 'f'; // 0x66
+			i2c_tx_msg[1] = 's'; // 0x73
+			i2c_tx_msg[2] = 0;
+			i2c_tx_msg[3] = 0;
+			i2c_slave_start_tx_data(i2c_tx_msg, I2C_DATA_SIZE);
+		}
+		// Data sent: 0x73 or 0x53
+		else if (('s' == i2c_rx_msg[0] || 'S' == i2c_rx_msg[0]) && app_present())
+		{
+			start_app();
+		}
+		else
+		{
+			// Unknown command: echo it. This does not stop the timeout, so a master
+			// talking to the (not yet started) app can't keep the system in the FBL.
+			for (uint8_t i = 0; i < I2C_DATA_SIZE; ++i)
+			{
+				i2c_tx_msg[i] = i2c_rx_msg[i];
+			}
+		}
+	}
 
 	return 0;
 }

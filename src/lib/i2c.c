@@ -17,6 +17,7 @@ u_i2c_status i2c_status_register = {0};
 
 // From i2c_interrupt.c:
 extern uint8_t i2c_tx_buf_ptr;
+extern uint8_t i2c_rx_buf_ptr;
 
 void i2c_init(uint8_t address)
 {
@@ -184,3 +185,7 @@ uint8_t i2c_get_data(uint8_t * msg, uint8_t size)
 	return i2c_status_register.last_rx_ok;
 }
 
+uint8_t i2c_get_rx_len()
+{
+	return i2c_rx_buf_ptr;
+}
